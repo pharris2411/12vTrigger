@@ -52,7 +52,7 @@
 #define MQTT_ATTRIBUTES_TOPIC       "crestron/attributes"
 #define MQTT_COMMAND_TOPIC          "crestron/command"
 #define WIFI_CLIENT_NAME            "Crestron Controller"
-#define MDSN_NAME                   "crestron"
+#define MDNS_NAME                   "crestron"
 
 #define TRIGGER_PIN         13
 #define MOSFET_PIN          14
@@ -89,7 +89,7 @@ void setup() {
   if (!wifiManager.autoConnect(WIFI_CLIENT_NAME)) ESP.reset();
 
   // Start servers
-  mdns.begin(MDSN_NAME);
+  mdns.begin(MDNS_NAME);
   httpUpdater.setup(&server);
   server.begin();
 
