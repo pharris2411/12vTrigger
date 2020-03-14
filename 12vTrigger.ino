@@ -1,3 +1,4 @@
+
 /*
  * This is a custom circuit used to help control a modified Crestron CNAMPX-16X60. 
  * 
@@ -34,7 +35,7 @@
  *  - Voltage divider circuit takes in 12v, using 100k and 33k ohm resistors to reduce the voltage to ~3v for input
  *  - 1000 ohm resistor on mosfet output, n-channel mosfet
  */
-
+ 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
 #include <ESP8266WebServer.h>
@@ -47,10 +48,11 @@
 
 #include "mqtt_config.h"
 
-#define MQTT_STATE_TOPIC      "crestron/state"
-#define MQTT_COMMAND_TOPIC    "crestron/command"
-#define WIFI_CLIENT_NAME      "Crestron Controller"
-#define MDSN_NAME             "crestron"
+#define MQTT_STATE_TOPIC            "crestron/state"
+#define MQTT_ATTRIBUTES_TOPIC       "crestron/attributes"
+#define MQTT_COMMAND_TOPIC          "crestron/command"
+#define WIFI_CLIENT_NAME            "Crestron Controller"
+#define MDSN_NAME                   "crestron"
 
 #define TRIGGER_PIN         13
 #define MOSFET_PIN          14
@@ -65,13 +67,7 @@ uint8_t stateChangeCount = 0;
 // Used to track the state and the reason the amp is on
 enum { CURRENT_STATE, TRIGGER, AUDIO, OVERRIDE };
 
-boolean states[4];
-
-states[CURRENT_STATE] = false;
-states[TRIGGER] = false;
-states[AUDIO] = false;
-states[OVERRIDE] = false;
-
+boolean states[4] = {false, false, false, false};
 
 MDNSResponder mdns;
 ESP8266WebServer server(80);
@@ -81,125 +77,144 @@ PubSubClient mqtt(mqttClient);
 
 void setup() {
   // put your setup code here, to run once:
-	Serial.begin(115200);
-	Serial.println();
-	Serial.println("Hello! I'm here to check if there's a 12 volt trigger active.");
+  Serial.begin(115200);
+  Serial.println();
+  Serial.println("Hello! I'm here to check if there's a 12 volt trigger active.");
 
-	pinMode(TRIGGER_PIN, INPUT);
-	pinMode(MOSFET_PIN, OUTPUT);
-	digitalWrite(MOSFET_PIN, 0);
+  pinMode(TRIGGER_PIN, INPUT);
+  pinMode(MOSFET_PIN, OUTPUT);
+  digitalWrite(MOSFET_PIN, 0);
 
-	WiFiManager wifiManager;
-	if (!wifiManager.autoConnect(WIFI_CLIENT_NAME)) ESP.reset();
+  WiFiManager wifiManager;
+  if (!wifiManager.autoConnect(WIFI_CLIENT_NAME)) ESP.reset();
 
   // Start servers
-	mdns.begin(MDSN_NAME);
-	httpUpdater.setup(&server);
-	server.begin();
+  mdns.begin(MDSN_NAME);
+  httpUpdater.setup(&server);
+  server.begin();
 
   // Connect to MQTT
-	mqtt.setServer(MQTT_HOST, MQTT_PORT);
-	mqtt.setCallback(mqttCallback);
-	mqttReconnect();
-
+  mqtt.setServer(MQTT_HOST, MQTT_PORT);
+  mqtt.setCallback(mqttCallback);
+  mqttReconnect();
+  
 }
 
+
 void turnOn(uint8_t source){
-	states[CURRENT_STATE] = true;
-	states[source] = true;
-	digitalWrite(MOSFET_PIN, 1);
+  states[CURRENT_STATE] = true;
+  states[source] = true;
+  digitalWrite(MOSFET_PIN, 1);
+  mqttPost();
 }
 
 void turnOffIfApplicable(){
-	if(!states[TRIGGER] && !states[AUDIO] && !states[OVERRIDE])
-		turnOff();
+  Serial.println("Turn off if applicable called!");
+  Serial.print("states[TRIGGER] == ");
+  Serial.println(states[TRIGGER] ? "TRIGGERED" : "OFF");
+  Serial.print("states[AUDIO] == ");
+  Serial.println(states[AUDIO] ? "AUDIOD" : "OFF");
+  Serial.print("states[OVERRIDE] == ");
+  Serial.println(states[OVERRIDE] ? "OVERRIDDEN" : "OFF");
+  mqttPost();
+  if(!states[TRIGGER] && !states[AUDIO] && !states[OVERRIDE])
+    turnOff();
 }
 
 void turnOff(){
-	states[CURRENT_STATE] = false;
-	digitalWrite(MOSFET_PIN, 0);
+  states[CURRENT_STATE] = false;
+  digitalWrite(MOSFET_PIN, 0);
+  mqttPost();
+}
+
+void mqttPost(){
+    Serial.println("Posting update to MQTT");
+    DynamicJsonBuffer json;
+    JsonObject &root = json.createObject();
+    
+    root["state"] = (states[CURRENT_STATE] ? "ON" : "OFF");
+    root["trigger"] = (states[TRIGGER] ? "TRIGGERED" : "OFF");
+    root["audio"] = (states[AUDIO] ? "AUDIOED" : "OFF");
+    root["override"] = (states[OVERRIDE] ? "OVERRIDDEN" : "OFF");
+    
+    char buffer[root.measureLength() + 1];
+    root.printTo(buffer, sizeof(buffer));
+    mqtt.publish(MQTT_ATTRIBUTES_TOPIC, buffer, true);
+    mqtt.publish(MQTT_STATE_TOPIC, (states[CURRENT_STATE] ? "ON" : "OFF"), true);
 }
 
 void mqttReconnect(){
-	static long lastReconnect = 0;
+  static long lastReconnect = 0;
 
-	if (millis() - lastReconnect > 5000){
-		if (mqtt.connect(WIFI_CLIENT_NAME, MQTT_USER, MQTT_PASS)){
-			mqtt.subscribe(MQTT_COMMAND_TOPIC);
+  if (millis() - lastReconnect > 5000){
+    if (mqtt.connect(WIFI_CLIENT_NAME, MQTT_USER, MQTT_PASS)){
+      mqtt.subscribe(MQTT_COMMAND_TOPIC);
+      
+      mqttPost();
 
-			DynamicJsonBuffer json;
-			JsonObject &root = json.createObject();
-
-			root["state"] = (states[CURRENT_STATE] ? "ON" : "OFF");
-			root["trigger"] = (states[TRIGGER] ? "TRIGGERED" : "OFF");
-			root["audio"] = (states[AUDIO] ? "AUDIOED" : "OFF");
-			root["override"] = (states[OVERRIDE] ? "OVERRIDDEN" : "OFF");
-
-			char buffer[root.measureLength() + 1];
-			root.printTo(buffer, sizeof(buffer));
-			mqtt.publish(MQTT_STATE_TOPIC, buffer, true);
-
-			lastReconnect = 0;
-		}
-		else lastReconnect = millis();
-	}
+      lastReconnect = 0;
+    }
+    else lastReconnect = millis();
+  }
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length){
-	char payload_assembled[length];
-	for (int i = 0; i < length; i++) payload_assembled[i] = (char)payload[i];
-
-		DynamicJsonBuffer json;
-	JsonObject& root = json.parseObject(payload_assembled);
-
-	if (!root.success()){
-		Serial.println("Unable to parse JSON");
-		return;
-	}
-
-	if (root.containsKey("state")){
-		if (!strcmp(root["state"], "ON")){
-			turnOn(OVERRIDE);
-		}
-		else if (!strcmp(root["state"], "OFF")){
-			states[OVERRIDE] = false;
-			turnOffIfApplicable();
-		}
-	}
-
-	char buffer[root.measureLength() + 1];
-	root.printTo(buffer, sizeof(buffer));
-	mqtt.publish(MQTT_STATE_TOPIC, buffer, true);
+  char payload_assembled[length];
+  for (int i = 0; i < length; i++) payload_assembled[i] = (char)payload[i];
+  Serial.print("In MQTT callback with topic ");
+  Serial.print(topic);
+  Serial.print(" -- ");
+  Serial.println(payload_assembled);
+  
+  if (strcmp(topic, MQTT_COMMAND_TOPIC) == 0) {
+    if (strcmp(payload_assembled, "ON") == 0){
+      turnOn(OVERRIDE);
+    }
+    else if (strcmp(payload_assembled, "OFF") == 0){
+      states[OVERRIDE] = false;
+      turnOffIfApplicable();
+    }
+  }
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
 
-	long now = millis();
-	if (now - lastMsg > pollRate){
-		lastMsg = now;
-		Serial.print("Polling... ");
+   long now = millis();
+   if (now - lastMsg > pollRate){
+    lastMsg = now;
+    Serial.print("Polling... ");
 
-		// Check the states of the 12 volt trigger
-		if(states[TRIGGER]){
-			if(digitalRead(TRIGGER_PIN) == LOW){
-				if (++stateChangeCount > NUM_SAMPLES){
-					turnOffIfApplicable();
-					states[TRIGGER] = false;
-					stateChangeCount = 0;
-				}
-			} else stateChangeCount = 0;
-		} else {
-			if(digitalRead(TRIGGER_PIN) == HIGH){
-				if (++stateChangeCount > NUM_SAMPLES){
-					turnOn(MQTT);
-					states[TRIGGER] = true;
-					stateChangeCount = 0;
-				}
-			} else stateChangeCount = 0;
-		}
+    // Check the states of the 12 volt trigger
+    if(states[TRIGGER]){
+      Serial.print(" current state is on and the pin");
+      if(digitalRead(TRIGGER_PIN) == LOW){
+        Serial.println(" is low!");
+        if (++stateChangeCount > NUM_SAMPLES){
+          states[TRIGGER] = false;
+          turnOffIfApplicable();
+          stateChangeCount = 0;
+        }
+      } else{ 
+        Serial.println(" is high!");
+        stateChangeCount = 0;
+      }
+    } else {
+      Serial.print(" current state is off and the pin");
+      if(digitalRead(TRIGGER_PIN) == HIGH){
+        Serial.println(" is high!");
+        if (++stateChangeCount > NUM_SAMPLES){
+          turnOn(TRIGGER);
+          states[TRIGGER] = true;
+          stateChangeCount = 0;
+        }
+      } else{ 
+        Serial.println(" is low!");
+        stateChangeCount = 0;
+      }
+    }
 
-		// TODO: Implement audio sensing
-
-	}
+    // TODO: Implement audio sensing
+    
+  }
 }
