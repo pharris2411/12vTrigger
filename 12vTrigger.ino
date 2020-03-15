@@ -25,7 +25,7 @@
  *                  --| ADC         D3 (RX0) |-- Serial RX/Prog TX
  *              VCC --| CHPD        D4 (SCL) |--
  *                  --| D16         D5 (SDA) |--
- *   19v output FET --| D14 (SCK)         D0 |-- Bootloader (low - program, high - normal)
+ *   5v relay board --| D14 (SCK)         D0 |-- Bootloader (low - program, high - normal)
  *                  --| D12 (MISO)  D2 (TX1) |--
  *    3v trigger in --| D13 (MOSI)  D15 (SS) |-- GND (for normal startup)
  *                  --| VCC              GND |--
@@ -33,7 +33,8 @@
  * ----------------------------------------------------------------------------------
  * Notes:
  *  - Voltage divider circuit takes in 12v, using 100k and 33k ohm resistors to reduce the voltage to ~3v for input
- *  - 1000 ohm resistor on mosfet output, n-channel mosfet
+ *  - 5v relay board from this set, controls the 19v power
+ *    https://www.amazon.com/KOOKYE-Modules-Arduino-Raspberry-Professional/dp/B01J9GD3DG
  */
 
 #include <ESP8266WiFi.h>
@@ -55,7 +56,7 @@
 #define MDNS_NAME                   "crestron"
 
 #define TRIGGER_PIN         13
-#define MOSFET_PIN          14
+#define RELAY_PIN           14
 #define NUM_SAMPLES         3 // number of samples before we consider a 12v trigger state change
 
 const int pollRate = 1000; // how often we should read the value for the 12v trigger
@@ -82,8 +83,8 @@ void setup() {
 	Serial.println("Hello! I'm here to check if there's a 12 volt trigger active.");
 
 	pinMode(TRIGGER_PIN, INPUT);
-	pinMode(MOSFET_PIN, OUTPUT);
-	digitalWrite(MOSFET_PIN, 0);
+	pinMode(RELAY_PIN, OUTPUT);
+	digitalWrite(RELAY_PIN, 1);
 
 	WiFiManager wifiManager;
 	if (!wifiManager.autoConnect(WIFI_CLIENT_NAME)) ESP.reset();
@@ -104,7 +105,7 @@ void setup() {
 void turnOn(uint8_t source){
 	states[CURRENT_STATE] = true;
 	states[source] = true;
-	digitalWrite(MOSFET_PIN, 1);
+	digitalWrite(RELAY_PIN, 0);
 	mqttPost();
 }
 
@@ -123,7 +124,7 @@ void turnOffIfApplicable(){
 
 void turnOff(){
 	states[CURRENT_STATE] = false;
-	digitalWrite(MOSFET_PIN, 0);
+	digitalWrite(RELAY_PIN, 1);
 	mqttPost();
 }
 
