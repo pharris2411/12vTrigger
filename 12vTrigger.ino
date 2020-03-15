@@ -159,26 +159,32 @@ void mqttReconnect(){
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length){
+  Serial.println("Callback triggered!");
+  
   char payload_assembled[length];
   for (int i = 0; i < length; i++) payload_assembled[i] = (char)payload[i];
-  Serial.print("In MQTT callback with topic ");
-  Serial.print(topic);
-  Serial.print(" -- ");
+  Serial.print("Payload -- ");
   Serial.println(payload_assembled);
   
-  if (strcmp(topic, MQTT_COMMAND_TOPIC) == 0) {
-    if (strcmp(payload_assembled, "ON") == 0){
-      turnOn(OVERRIDE);
-    }
-    else if (strcmp(payload_assembled, "OFF") == 0){
-      states[OVERRIDE] = false;
-      turnOffIfApplicable();
-    }
+  if (strcmp(payload_assembled, "ON") == 0){
+    turnOn(OVERRIDE);
+    Serial.println("Turning on override");
   }
+  else if (strcmp(payload_assembled, "OFF") == 0){
+    states[OVERRIDE] = false;
+    turnOffIfApplicable();
+    Serial.println("Setting override off.");
+  } else
+    Serial.println("Didn't match checks");
+
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+ 
+   // Handle servers
+   if (!mqtt.connected()) mqttReconnect();
+   if (mqtt.connected()) mqtt.loop();
+   server.handleClient();
 
    long now = millis();
    if (now - lastMsg > pollRate){
